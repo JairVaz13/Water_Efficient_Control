@@ -1,8 +1,8 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 class UserBase(BaseModel):
     nombre: str
-    email: EmailStr
+    email: str
 
 class UserCreate(UserBase):
     contrasena: str
