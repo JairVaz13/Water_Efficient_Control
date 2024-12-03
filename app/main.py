@@ -4,11 +4,14 @@ from app.database import get_db_connection
 from schemas.user import UserCreate
 from schemas.container import ContainerCreate, ContainerUpdate
 from schemas.sensor import SensorCreate, SensorUpdate, SensorData
-from app.crud.user import create_user, authenticate_user  # Ajustado
+from schemas.dispensador import DispensadorCreate, DispensadorUpdate
+from app.crud.user import create_user, authenticate_user
 from app.crud.containers import create_container, get_container, get_containers1, update_container, delete_container
 from app.crud.sensors import create_sensor, get_Sensor, get_Sensores, update_sensor, delete_sensor, create_ia_recipiente_sensor, fetch_sensor_data
-from pydantic import BaseModel
+from app.crud.dispensador import (create_dispensador, get_dispensador, get_dispensadores, update_dispensador, delete_dispensador,)
 from sklearn.linear_model import LinearRegression
+from datetime import datetime, timedelta
+from pydantic import BaseModel
 import numpy as np
 import requests
 
@@ -138,86 +141,93 @@ def delete_sensor_endpoint(sensor_id: int, token: str):
 
 # Rutas para IA Recipiente Sensor
 @app.post("/ia_recipiente_sensor/crear", status_code=status.HTTP_201_CREATED, summary="Endpoint para crear un registro de sensor", tags=['IA Recipiente Sensor'])
-def create_ia_recipiente_sensor_endpoint(id_recipiente: int, id_sensor: int, valor: float, fecha: str):
-    new_ia_recipiente_sensor = create_ia_recipiente_sensor(id_recipiente, id_sensor, valor, fecha)
+def create_ia_recipiente_sensor_endpoint(id_sensor: int, valor: float, fecha: str):
+    new_ia_recipiente_sensor = create_ia_recipiente_sensor(id_sensor, valor, fecha)
     return new_ia_recipiente_sensor
-
-
 @app.get("/ia/recommendations", summary="Obtener recomendaciones basadas en datos de sensores", tags=["IA Recipiente Sensor"])
-def generate_recommendations_with_ollama_endpoint(
+def generate_recommendations(
     id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones")
 ):
     try:
-        # 1. Obtener datos
-        data = fetch_sensor_data(id_recipiente)
-        if not data:
+        # 1. Obtener datos de la base de datos
+        sensor_data = fetch_sensor_data(id_recipiente)
+        if not sensor_data:
             raise HTTPException(status_code=404, detail="No se encontraron datos para este recipiente")
         
-        # 2. Procesar datos - con verificación
-        try:
-            valores = np.array([row[0] for row in data]).reshape(-1, 1)
-            if len(valores) == 0:
-                raise ValueError("No hay valores válidos para procesar")
-        except Exception as e:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Error al procesar los datos del sensor: {str(e)}"
-            )
+        # 2. Verificar que los datos contienen las claves necesarias
+        tipo_recipiente = sensor_data[0].get("tipo_recipiente")
+        capacidad_recipiente = sensor_data[0].get("capacidad")
+        
+        if tipo_recipiente is None or capacidad_recipiente is None:
+            raise HTTPException(status_code=500, detail="Faltan datos de tipo o capacidad del recipiente")
 
-        # 3. Entrenar modelo
-        try:
-            fechas = np.arange(len(valores)).reshape(-1, 1)
-            model = LinearRegression()
-            model.fit(fechas, valores)
-            predicciones = model.predict(fechas)
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error en el procesamiento del modelo: {str(e)}"
-            )
+        # 3. Agrupar los datos por tipo de sensor
+        sensores = {}
+        for row in sensor_data:
+            tipo_sensor = row["tipo_sensor"]
+            if tipo_sensor not in sensores:
+                sensores[tipo_sensor] = []
+            sensores[tipo_sensor].append(row)
+        
+        # 4. Preparar y procesar predicciones para cada sensor
+        resultado = []
+        dias_prediccion = 3  
+        for tipo_sensor, sensor_data in sensores.items():
+            try:
+                fechas = np.array([row["fecha"] for row in sensor_data])  
+                valores = np.array([row["valor"] for row in sensor_data]).reshape(-1, 1)
+                if len(valores) == 0:
+                    raise ValueError(f"No hay valores válidos para el sensor {tipo_sensor}")
+                
+                dias = np.array([(fecha - fechas[0]).days for fecha in fechas]).reshape(-1, 1)
+                model = LinearRegression()
+                model.fit(dias, valores)
+                
+                dias_pred = np.array([dias.max() + i for i in range(1, dias_prediccion + 1)]).reshape(-1, 1)
+                predicciones = model.predict(dias_pred)
+                
+                datos_sensor = [
+                    {"fecha": fecha.strftime("%Y-%m-%d"), "valor": float(valores[i][0])}
+                    for i, fecha in enumerate(fechas)
+                ]
+                datos_predicciones = [
+                    {"fecha": (fechas[-1] + timedelta(days=i)).strftime("%Y-%m-%d"), "valor_predicho": float(pred[0])}
+                    for i, pred in enumerate(predicciones, start=1)
+                ]
+                
+                resultado.append({
+                    "tipo_sensor": tipo_sensor,
+                    "datos_sensor": datos_sensor + datos_sensor,  
+                    "predicciones": datos_predicciones + datos_predicciones 
+                })
+            
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error al procesar los datos para el sensor {tipo_sensor}: {str(e)}"
+                )
 
-        # 4. Preparar mensaje
-        promedio = np.mean(valores)
-        mensaje = f"""
-        Tengo datos de sensores para un recipiente. El promedio actual de TDS/pH/temperatura es {promedio:.2f}.
-        Proporciona recomendaciones específicas para mejorar la calidad basadas en estándares internacionales.
-        """
-
-        # 5. Llamada a Ollama con timeout
-        try:
-            response = requests.post(
-                "http://localhost:11500/api/generate",
-                json={
-                    "model": "qwen2.5-coder:0.5b",
-                    "prompt": mensaje
-                },
-                timeout=10  # timeout de 10 segundos
-            )
-            response.raise_for_status()  # Lanza excepción si status_code != 2xx
-            recomendacion = response.json().get("response", "No se recibieron recomendaciones.")
-        except requests.exceptions.ConnectionError:
-            raise HTTPException(
-                status_code=503,
-                detail="No se pudo conectar al servicio de Ollama. Verifica que esté corriendo."
-            )
-        except requests.exceptions.Timeout:
-            raise HTTPException(
-                status_code=504,
-                detail="Timeout al conectar con Ollama"
-            )
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error al comunicarse con Ollama: {str(e)}"
-            )
-
-        # 6. Retornar resultados
-        return {
-            "promedio": float(promedio),
-            "predicciones": predicciones.tolist(),
-            "recomendaciones": recomendacion
+        # 5. Formatear el payload para la API externa, incorporando la información del recipiente
+        payload = {
+            "id_recipiente": id_recipiente,
+            "tipo_recipiente": tipo_recipiente,
+            "capacidad_recipiente": capacidad_recipiente,
+            "sensores": resultado
         }
 
+        print(payload)
+        
+        # 6. Enviar los datos a la API externa
+        url = "https://magicloops.dev/api/loop/97e29a29-1da2-42d0-a963-96cf0b5ef88a/run"
+        response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Error al enviar los datos: {response.text}"
+            )
+        
+        return {"message": "Recomendaciones generadas y enviadas correctamente", "response": response.json()}
+    
     except HTTPException:
         raise
     except Exception as e:
@@ -225,3 +235,44 @@ def generate_recommendations_with_ollama_endpoint(
             status_code=500,
             detail=f"Error interno del servidor: {str(e)}"
         )
+
+    
+#Rutas para Dispensador
+@app.get("/dispensadores", status_code=status.HTTP_200_OK, summary="Obtener todos los dispensadores", tags=['Dispensadores'])
+def get_all_dispensadores(token: str):
+    dispensadores = get_dispensadores(token)
+    if not dispensadores:
+        raise HTTPException(status_code=404, detail="No se encontraron dispensadores")
+    return dispensadores
+
+# Obtener un dispensador por ID
+@app.get("/dispensadores/{dispensador_id}", status_code=status.HTTP_200_OK, summary="Obtener un dispensador por ID", tags=['Dispensadores'])
+def get_dispensador_by_id(dispensador_id: int, token: str):
+    dispensador = get_dispensador(dispensador_id, token)
+    if not dispensador:
+        raise HTTPException(status_code=404, detail="Dispensador no encontrado")
+    return dispensador
+
+# Crear un nuevo dispensador
+@app.post("/dispensadores/crear", status_code=status.HTTP_201_CREATED, summary="Crear un dispensador", tags=['Dispensadores'])
+def create_dispensador_endpoint(dispensador: DispensadorCreate):
+    new_dispensador = create_dispensador(dispensador.estado, dispensador.id_recipiente, dispensador.token)
+    if not new_dispensador:
+        raise HTTPException(status_code=400, detail="Error al crear el dispensador")
+    return new_dispensador
+
+# Endpoint para actualizar un dispensador
+@app.put("/dispensadores/{dispensador_id}", status_code=status.HTTP_200_OK, summary="Actualizar un dispensador", tags=['Dispensadores'])
+def update_dispensador_endpoint(dispensador_id: int, dispensador: DispensadorUpdate):
+    updated_dispensador = update_dispensador(dispensador_id, dispensador.estado, dispensador.token)
+    if not updated_dispensador:
+        raise HTTPException(status_code=404, detail="Dispensador no encontrado o no se pudo actualizar")
+    return updated_dispensador
+
+# Eliminar un dispensador
+@app.delete("/dispensadores/{dispensador_id}", status_code=status.HTTP_200_OK, summary="Eliminar un dispensador", tags=['Dispensadores'])
+def delete_dispensador_endpoint(dispensador_id: int, token: str):
+    deleted_dispensador = delete_dispensador(dispensador_id, token)
+    if not deleted_dispensador:
+        raise HTTPException(status_code=404, detail="Dispensador no encontrado")
+    return deleted_dispensador  
