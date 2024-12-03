@@ -115,7 +115,8 @@ def get_sensors_endpoint(token: str):
 def create_sensor_endpoint(sensor: SensorCreate):
     tipo = sensor.tipo
     token = sensor.token
-    new_sensor = create_sensor(tipo, token)
+    id_recipiente = sensor.id_recipiente
+    new_sensor = create_sensor(tipo, token, id_recipiente)
     return new_sensor
 
 @app.get("/sensors/{sensor_id}/{token}", status_code=status.HTTP_200_OK, summary="Endpoint para obtener un sensor", tags=['Sensors'])

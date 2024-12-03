@@ -9,7 +9,7 @@ class SensorBase(BaseModel):
 class SensorCreate(SensorBase):
     tipo: Optional[str] = None
     token: str
-    id_recipienre: int
+    id_recipiente: int
     
 class SensorUpdate(BaseModel):
     tipo: Optional[str] = None
