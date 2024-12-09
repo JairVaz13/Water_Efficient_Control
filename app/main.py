@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import get_db_connection
 from schemas.user import UserCreate
@@ -10,11 +10,18 @@ from app.crud.containers import create_container, get_container, get_containers1
 from app.crud.sensors import create_sensor, get_Sensor, get_Sensores, update_sensor, delete_sensor, create_ia_recipiente_sensor, fetch_sensor_data
 from app.crud.dispensador import (create_dispensador, get_dispensador, get_dispensadores, update_dispensador, delete_dispensador,)
 from sklearn.linear_model import LinearRegression
-from datetime import datetime, timedelta
+from fastapi.responses import JSONResponse
+import google.generativeai as genai
+from datetime import timedelta
 from pydantic import BaseModel
 import numpy as np
 import requests
+import os
 
+
+# Configuración de la API de Gemini
+API_KEY = 'AIzaSyAhRae2tesr51ZghpECc5AqU4bZon9cuQg'
+genai.configure(api_key=API_KEY)
 
 app = FastAPI()
 
@@ -145,6 +152,7 @@ def delete_sensor_endpoint(sensor_id: int, token: str):
 def create_ia_recipiente_sensor_endpoint(id_sensor: int, valor: float, fecha: str):
     new_ia_recipiente_sensor = create_ia_recipiente_sensor(id_sensor, valor, fecha)
     return new_ia_recipiente_sensor
+
 @app.get("/ia/recommendations", summary="Obtener recomendaciones basadas en datos de sensores", tags=["IA Recipiente Sensor"])
 def generate_recommendations(
     id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones")
@@ -227,7 +235,9 @@ def generate_recommendations(
                 detail=f"Error al enviar los datos: {response.text}"
             )
         
-        return {"message": "Recomendaciones generadas y enviadas correctamente", "response": response.json()}
+        return {"tipo_recipiente": tipo_recipiente,
+            "capacidad_recipiente": capacidad_recipiente,
+            "sensores": resultado, "response": response.json()}
     
     except HTTPException:
         raise
@@ -237,7 +247,96 @@ def generate_recommendations(
             detail=f"Error interno del servidor: {str(e)}"
         )
 
-    
+
+@app.post("/ia/foto", status_code=status.HTTP_200_OK, summary="Analizar imagen y generar recomendaciones")
+async def foto_analisis(
+    id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones"),
+    file: UploadFile = File(..., description="Imagen a analizar")
+):
+    try:
+        # 1. Obtener datos del recipiente
+        sensor_data = fetch_sensor_data(id_recipiente)
+        if not sensor_data:
+            raise HTTPException(status_code=404, detail="No se encontraron datos para este recipiente")
+        
+        tipo_recipiente = sensor_data[0].get("tipo_recipiente")
+        capacidad_recipiente = sensor_data[0].get("capacidad")
+        if not tipo_recipiente or not capacidad_recipiente:
+            raise HTTPException(status_code=500, detail="Datos incompletos del recipiente")
+
+        # 2. Procesar datos de sensores
+        sensores = {}
+        for row in sensor_data:
+            tipo_sensor = row["tipo_sensor"]
+            if tipo_sensor not in sensores:
+                sensores[tipo_sensor] = []
+            sensores[tipo_sensor].append(row)
+
+        resultado_sensores = []
+        dias_prediccion = 3
+        for tipo_sensor, sensor_data in sensores.items():
+            fechas = np.array([row["fecha"] for row in sensor_data], dtype='datetime64')
+            valores = np.array([row["valor"] for row in sensor_data]).reshape(-1, 1)
+            if len(valores) == 0:
+                continue
+            
+            dias = np.array([(fecha - fechas[0]).astype(int) for fecha in fechas]).reshape(-1, 1)
+            model = LinearRegression()
+            model.fit(dias, valores)
+            
+            dias_pred = np.array([dias.max() + i for i in range(1, dias_prediccion + 1)]).reshape(-1, 1)
+            predicciones = model.predict(dias_pred)
+            
+            datos_sensor = [
+                {"fecha": str(fechas[i]), "valor": float(valores[i][0])}
+                for i in range(len(valores))
+            ]
+            datos_predicciones = [
+                {"fecha": str((fechas[-1] + np.timedelta64(i, 'D'))), "valor_predicho": float(pred[0])}
+                for i, pred in enumerate(predicciones, start=1)
+            ]
+            
+            resultado_sensores.append({
+                "tipo_sensor": tipo_sensor,
+                "datos_sensor": datos_sensor,
+                "predicciones": datos_predicciones
+            })
+
+        # 3. Analizar imagen usando Gemini
+        try:
+            temp_file_path = f"/tmp/{file.filename}"
+            with open(temp_file_path, "wb") as temp_file:
+                temp_file.write(await file.read())
+            
+            uploaded_file = genai.upload_file(temp_file_path)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content([
+                f"Describe el estado del agua en esta imagen, identifica colores, posibles contaminantes y recomienda acciones específicas(como cuanto usar de cloro o algun otro prtoducto quimico y en que proporciones segun el {tipo_recipiente} y su cpacidad {capacidad_recipiente}). recuerda debes responder asi (Como tu IA generativa para tu {tipo_recipiente} que tiene esta capicidad {capacidad_recipiente} )",
+                uploaded_file
+            ])
+            
+            os.remove(temp_file_path)  # Limpieza del archivo temporal
+
+            analisis_imagen = {
+                "estado_agua": response.text,
+            }
+            
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error en el análisis de la imagen: {str(e)}")
+
+        # 4. Generar respuesta final
+        return JSONResponse(content={
+            "id_recipiente": id_recipiente,
+            "tipo_recipiente": tipo_recipiente,
+            "capacidad_recipiente": capacidad_recipiente,
+            "analisis_sensores": resultado_sensores,
+            "analisis_imagen": analisis_imagen
+        })
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en el análisis: {str(e)}")
+
 #Rutas para Dispensador
 @app.get("/dispensadores", status_code=status.HTTP_200_OK, summary="Obtener todos los dispensadores", tags=['Dispensadores'])
 def get_all_dispensadores(token: str):
@@ -263,7 +362,7 @@ def create_dispensador_endpoint(dispensador: DispensadorCreate):
     return new_dispensador
 
 # Endpoint para actualizar un dispensador
-@app.put("/dispensadores/{dispensador_id}", status_code=status.HTTP_200_OK, summary="Actualizar un dispensador", tags=['Dispensadores'])
+@app.patch("/dispensadores/{dispensador_id}", status_code=status.HTTP_200_OK, summary="Actualizar un dispensador", tags=['Dispensadores'])
 def update_dispensador_endpoint(dispensador_id: int, dispensador: DispensadorUpdate):
     updated_dispensador = update_dispensador(dispensador_id, dispensador.estado, dispensador.token)
     if not updated_dispensador:
@@ -277,3 +376,48 @@ def delete_dispensador_endpoint(dispensador_id: int, token: str):
     if not deleted_dispensador:
         raise HTTPException(status_code=404, detail="Dispensador no encontrado")
     return deleted_dispensador  
+
+# Rutas para Graficos y notificaciones
+@app.get("/graficos", status_code=status.HTTP_200_OK, summary="Endpoint para obtener los datos para gráficos", tags=['Graficos y notificaiones'])
+def get_graph_data(token: str):
+    # Obtener id del trcipiente segun el token
+    id_recipiente = get_containers1(token=token)[0].get("id_recipiente")
+
+    # Obtener datos de sensores
+    sensor_data = fetch_sensor_data(id_recipiente)
+    if not sensor_data:
+        raise HTTPException(status_code=404, detail="No se encontraron datos para este recipiente")
+    
+    # Procesar datos de sensores
+    sensores = {}
+
+    for row in sensor_data:
+        tipo_sensor = row["tipo_sensor"]
+        if tipo_sensor not in sensores:
+            sensores[tipo_sensor] = []
+        sensores[tipo_sensor].append(row)
+
+    resultado_sensores = []
+
+    for tipo_sensor, sensor_data in sensores.items():
+
+        fechas = np.array([row["fecha"] for row in sensor_data], dtype='datetime64')
+        valores = np.array([row["valor"] for row in sensor_data]).reshape(-1, 1)
+        if len(valores) == 0:
+            continue
+        
+        dias = np.array([(fecha - fechas[0]).astype(int) for fecha in fechas]).reshape(-1, 1)
+        model = LinearRegression()
+        model.fit(dias, valores)
+        
+        datos_sensor = [
+            {"fecha": str(fechas[i]), "valor": float(valores[i][0])}
+            for i in range(len(valores))
+        ]
+        
+        resultado_sensores.append({
+            "tipo_sensor": tipo_sensor,
+            "datos_sensor": datos_sensor,
+        })
+    
+    return resultado_sensores
