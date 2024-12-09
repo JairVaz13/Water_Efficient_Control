@@ -248,7 +248,7 @@ def generate_recommendations(
         )
 
 
-@app.post("/ia/foto", status_code=status.HTTP_200_OK, summary="Analizar imagen y generar recomendaciones")
+@app.post("/ia/foto", status_code=status.HTTP_200_OK, summary="Analizar imagen y generar recomendaciones", tags=["IA Recipiente Sensor"])
 async def foto_analisis(
     id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones"),
     file: UploadFile = File(..., description="Imagen a analizar")
