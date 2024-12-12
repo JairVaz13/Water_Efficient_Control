@@ -339,8 +339,7 @@ async def foto_analisis(
         raise HTTPException(status_code=500, detail=f"Error en el análisis: {str(e)}")
 
 
-
-@app.post("/ia/foto/base", status_code=status.HTTP_200_OK, summary="Analizar imagen y generar recomendaciones", tags=["IA Recipiente Sensor"])
+@app.post("/ia/foto_base", status_code=200, summary="Analizar imagen y generar recomendaciones", tags=["IA Recipiente Sensor"])
 async def foto_analisis(
     id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones"),
     file_base64: str = Query(..., description="Imagen en formato Base64 a analizar")
@@ -356,7 +355,7 @@ async def foto_analisis(
         if not tipo_recipiente or not capacidad_recipiente:
             raise HTTPException(status_code=500, detail="Datos incompletos del recipiente")
 
-        # 2. Procesar datos de sensores
+        # 2. Procesar datos de sensores (sin cambios)
         sensores = {}
         for row in sensor_data:
             tipo_sensor = row["tipo_sensor"]
@@ -394,17 +393,18 @@ async def foto_analisis(
                 "predicciones": datos_predicciones
             })
 
-        # 3. Analizar imagen usando Gemini
+        # 3. Decodificar imagen Base64 y analizar con Gemini
         try:
             # Decodificar Base64
             temp_file_path = "/tmp/temp_image.jpg"
             with open(temp_file_path, "wb") as temp_file:
                 temp_file.write(base64.b64decode(file_base64))
             
+            # Subir imagen a Gemini
             uploaded_file = genai.upload_file(temp_file_path)
             model = genai.GenerativeModel("gemini-1.5-flash")
             response = model.generate_content([
-                f"Describe el estado del agua en esta imagen, identifica colores, posibles contaminantes y recomienda acciones específicas(como cuanto usar de cloro o algun otro prtoducto quimico y en que proporciones segun el {tipo_recipiente} y su cpacidad {capacidad_recipiente}). recuerda debes responder asi (Como tu IA generativa para tu {tipo_recipiente} que tiene esta capicidad {capacidad_recipiente} )",
+                f"Describe el estado del agua en esta imagen, identifica colores, posibles contaminantes y recomienda acciones específicas (como cuánto usar de cloro o algún otro producto químico y en qué proporciones según el {tipo_recipiente} y su capacidad {capacidad_recipiente}). Recuerda: debes responder así: 'Como tu IA generativa para tu {tipo_recipiente} que tiene esta capacidad {capacidad_recipiente}'.",
                 uploaded_file
             ])
             
@@ -414,7 +414,6 @@ async def foto_analisis(
                 "estado_agua": response.text,
             }
             
-
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error en el análisis de la imagen: {str(e)}")
 
@@ -429,7 +428,7 @@ async def foto_analisis(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el análisis: {str(e)}")
-
+    
 #Rutas para Dispensador
 @app.get("/dispensadores", status_code=status.HTTP_200_OK, summary="Obtener todos los dispensadores", tags=['Dispensadores'])
 def get_all_dispensadores(token: str):
