@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 import google.generativeai as genai
 from datetime import timedelta
 from pydantic import BaseModel
+import base64
 import numpy as np
 import requests
 import os
@@ -343,6 +344,7 @@ async def foto_analisis(
 async def foto_analisis(
     id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones"),
     file_base64: str = Query(..., description="Imagen en formato Base64 a analizar")
+):
     try:
         # 1. Obtener datos del recipiente
         sensor_data = fetch_sensor_data(id_recipiente)
@@ -394,7 +396,8 @@ async def foto_analisis(
 
         # 3. Analizar imagen usando Gemini
         try:
-            temp_file_path = f"/tmp/{file.filename}"
+            # Decodificar Base64
+            temp_file_path = "/tmp/temp_image.jpg"
             with open(temp_file_path, "wb") as temp_file:
                 temp_file.write(base64.b64decode(file_base64))
             
