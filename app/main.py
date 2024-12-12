@@ -21,7 +21,7 @@ import os
 
 
 # Configuración de la API de Gemini
-API_KEY = 'AIzaSyA9uKfw3cv-1HOmic_ff7nLlFvq3yj7tyo'
+API_KEY = 'AIzaSyAMOpYH4Ozp03jjXLpeqUoC2f--l_vJL58'
 genai.configure(api_key=API_KEY)
 
 app = FastAPI()
