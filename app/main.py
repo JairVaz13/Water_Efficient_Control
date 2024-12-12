@@ -53,6 +53,10 @@ class LoginOutput(BaseModel):
     email: str
     token: str
 
+class FotoAnalisisRequest(BaseModel):
+    id_recipiente: int
+    imagen_base64: str
+
 # Crear usuario
 @app.post("/user/crear", status_code=status.HTTP_200_OK, summary="Endpoint para registrarse", tags=['User'])
 def create_user_endpoint(user: UserCreate):
@@ -340,11 +344,11 @@ async def foto_analisis(
 
 
 @app.post("/ia/foto_base", status_code=200, summary="Analizar imagen y generar recomendaciones", tags=["IA Recipiente Sensor"])
-async def foto_analisis(
-    id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones"),
-    file_base64: str = Query(..., description="Imagen en formato Base64 a analizar")
-):
+async def foto_analisis(request: FotoAnalisisRequest):
     try:
+        id_recipiente = request.id_recipiente
+        file_base64 = request.imagen_base64
+
         # 1. Obtener datos del recipiente
         sensor_data = fetch_sensor_data(id_recipiente)
         if not sensor_data:
@@ -355,7 +359,7 @@ async def foto_analisis(
         if not tipo_recipiente or not capacidad_recipiente:
             raise HTTPException(status_code=500, detail="Datos incompletos del recipiente")
 
-        # 2. Procesar datos de sensores (sin cambios)
+        # 2. Procesar datos de sensores
         sensores = {}
         for row in sensor_data:
             tipo_sensor = row["tipo_sensor"]
@@ -428,7 +432,6 @@ async def foto_analisis(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el análisis: {str(e)}")
-    
 #Rutas para Dispensador
 @app.get("/dispensadores", status_code=status.HTTP_200_OK, summary="Obtener todos los dispensadores", tags=['Dispensadores'])
 def get_all_dispensadores(token: str):
