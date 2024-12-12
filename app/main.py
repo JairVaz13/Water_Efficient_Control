@@ -248,12 +248,12 @@ def generate_recommendations(
             detail=f"Error interno del servidor: {str(e)}"
         )
 
-
 @app.post("/ia/foto", status_code=status.HTTP_200_OK, summary="Analizar imagen y generar recomendaciones", tags=["IA Recipiente Sensor"])
 async def foto_analisis(
     id_recipiente: int = Query(..., description="ID del recipiente para generar recomendaciones"),
     file: UploadFile = File(..., description="Imagen a analizar")
 ):
+
     try:
         # 1. Obtener datos del recipiente
         sensor_data = fetch_sensor_data(id_recipiente)
