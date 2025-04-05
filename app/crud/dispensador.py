@@ -3,7 +3,7 @@ from ..database import get_db_connection
 
 # Obtener todos los dispensadores
 def get_dispensadores(token: str):
-    query = "SELECT * FROM Dispensador WHERE token = %s"    
+    query = "SELECT * FROM dispensadores WHERE token = %s"    
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
     try:
@@ -18,7 +18,7 @@ def get_dispensadores(token: str):
 
 # Obtener un dispensador por ID
 def get_dispensador(dispensador_id: int, token: str):
-    query = "SELECT * FROM Dispensador WHERE id_dispensador = %s AND token = %s"
+    query = "SELECT * FROM dispensadores WHERE id_dispensador = %s AND token = %s"
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
     try:
@@ -34,7 +34,7 @@ def get_dispensador(dispensador_id: int, token: str):
 # Crear un dispensador
 def create_dispensador(estado: str, id_recipiente: int, token: str):    
     query = """
-    INSERT INTO Dispensador (estado, id_recipiente, token)
+    INSERT INTO dispensadores (estado, id_recipiente, token)
     VALUES (%s, %s, %s)
     """
     connection = get_db_connection()
@@ -53,10 +53,10 @@ def create_dispensador(estado: str, id_recipiente: int, token: str):
 
 def update_dispensador(dispensador_id: int, estado: str, token: str):
     query_check = """
-    SELECT id_dispensador FROM Dispensador WHERE id_dispensador = %s AND token = %s
+    SELECT id_dispensador FROM dispensadores WHERE id_dispensador = %s AND token = %s
     """
     query_update_state = """
-    UPDATE Dispensador SET estado = %s WHERE id_dispensador = %s AND token = %s
+    UPDATE dispensadores SET estado = %s WHERE id_dispensador = %s AND token = %s
     """
     connection = get_db_connection()
     cursor = connection.cursor()
@@ -85,7 +85,7 @@ def update_dispensador(dispensador_id: int, estado: str, token: str):
 
 # Eliminar un dispensador
 def delete_dispensador(dispensador_id: int, token: str):
-    query = "DELETE FROM Dispensador WHERE id_dispensador = %s AND token = %s"
+    query = "DELETE FROM dispensadores WHERE id_dispensador = %s AND token = %s"
     connection = get_db_connection()
     cursor = connection.cursor()
     try:
